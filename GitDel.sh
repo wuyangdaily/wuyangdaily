@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-set +e
+set -e
 
-# ===== 输出函数 =====
+# 彩色输出函数
 info() { echo -e "\033[36m[信息]\033[0m $1"; }
 warn() { echo -e "\033[33m[警告]\033[0m $1"; }
 success() { echo -e "\033[32m[完成]\033[0m $1"; }
@@ -12,134 +12,115 @@ echo -e "bash <(curl -sL https://url.wuyang.skin/GitDel)"
 
 # 读取 GitHub Token
 read -p "请输入 GitHub Token（私有仓库必填）: " GITHUB_TOKEN
-trap 'unset GITHUB_TOKEN; info "GitHub Token 已清除"' EXIT
 
-# ===== 主循环 =====
+# 无论如何退出都清除 GitHub Token
+trap 'unset GITHUB_TOKEN; echo -e "\033[36m[信息]\033[0m GitHub Token 已清除"' EXIT
+
 while true; do
-
-    read -p "请输入仓库列表（空格分隔，0退出）: " -a REPO_LIST
-    [[ "${REPO_LIST[0]}" == "0" ]] && exit 0
+    read -p "请输入仓库列表（支持 URL 或 owner/repo，空格分隔，0退出）: " -a REPO_LIST
+    if [[ "${REPO_LIST[0]}" == "0" ]]; then
+        info "已退出脚本"
+        exit 0
+    fi
 
     for INPUT_REPO in "${REPO_LIST[@]}"; do
-
-        TMP_DIR=""
-        TMP_WORKFLOW=""
-
-        # =========================
-        # 解析仓库
-        # =========================
+        # 统一仓库路径
         if [[ "$INPUT_REPO" =~ ^https://github.com/(.+)$ ]]; then
             REPO_PATH="${BASH_REMATCH[1]}"
         else
             REPO_PATH="${INPUT_REPO#/}"
         fi
 
-        if [[ -n "$GITHUB_TOKEN" ]]; then
-            REMOTE_URL="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
-        else
-            REMOTE_URL="https://github.com/${REPO_PATH}.git"
-        fi
+if [[ -n "$GITHUB_TOKEN" ]]; then
+    REMOTE_URL="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
+else
+        REMOTE_URL="https://github.com/${REPO_PATH}.git"
+fi
+info "准备操作仓库: $REPO_PATH"
 
-        info "准备操作仓库: $REPO_PATH"
-
-        # =========================
-        # clone
-        # =========================
         TMP_DIR=$(mktemp -d)
-        info "临时目录: $TMP_DIR"
+        info "临时目录已创建: $TMP_DIR"
 
+        info "正在克隆仓库..."
         git clone "$REMOTE_URL" "$TMP_DIR"
         cd "$TMP_DIR"
 
-        # =========================
-        # 自动检测默认分支
-        # =========================
-        DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-
-        if [[ -z "$DEFAULT_BRANCH" ]]; then
-            if git ls-remote --heads origin main | grep -q main; then
-                DEFAULT_BRANCH="main"
-            elif git ls-remote --heads origin master | grep -q master; then
-                DEFAULT_BRANCH="master"
-            else
-                DEFAULT_BRANCH="main"
+        # 检查仓库是否为空
+        if [ -z "$(git ls-remote --heads origin)" ]; then
+            warn "⚠️ 仓库为空！没有任何提交。"
+            read -p "确定要继续清空并推送？[Y/N]: " yn_empty
+            if [[ ! "$yn_empty" =~ ^[Yy]$ ]]; then
+                warn "操作已取消"
+                cd ~
+                rm -rf "$TMP_DIR"
+                continue
             fi
         fi
 
-        info "默认分支: $DEFAULT_BRANCH"
-
-        # =========================
-        # 备份 workflows
-        # =========================
+        # 备份工作流
         if [ -d ".github/workflows" ]; then
             TMP_WORKFLOW=$(mktemp -d)
             cp -r .github/workflows "$TMP_WORKFLOW/"
-            info "已备份 workflows"
+            info "工作流已备份到: $TMP_WORKFLOW"
         fi
 
-        # =========================
-        # 清空历史
-        # =========================
+        # 分支名
+        read -p "请输入要操作的分支名（默认 main）: " BRANCH
+        BRANCH=${BRANCH:-main}
+
+        # 检查分支保护
+        API_URL="https://api.github.com/repos/$REPO_PATH/branches/$BRANCH/protection"
+        PROTECTED="no"
+        HTTP_STATUS=$(curl -H "Authorization: token $GITHUB_TOKEN" -s -o /dev/null -w "%{http_code}" "$API_URL")
+        if [[ "$HTTP_STATUS" == "200" ]]; then
+            PROTECTED="yes"
+        fi
+
+        # 删除 Git 历史并初始化
         rm -rf .git
         git init
 
+        # 自动设置 Git 提交身份，避免 commit 报错
         git config user.name "AutoCommit"
         git config user.email "auto@example.com"
 
         git add .
         git commit -m "init"
-        success "历史已清空"
+        success "Git 历史已清空（本地）"
 
-        # =========================
-        # 恢复 workflows
-        # =========================
+        # 恢复工作流
         if [ -d "$TMP_WORKFLOW/workflows" ]; then
             mkdir -p .github
             rsync -a "$TMP_WORKFLOW/workflows/" .github/workflows/
             git add -f .github/workflows
             git commit --amend --no-edit
-            success "已恢复 workflows"
+            success "工作流已恢复"
         fi
-
-        # =========================
-        # 强制分支统一
-        # =========================
-        git branch -M "$DEFAULT_BRANCH"
 
         git remote add origin "$REMOTE_URL"
 
-        # =========================
-        # push
-        # =========================
-        info "推送到 $DEFAULT_BRANCH ..."
-
-        push_output=$(git push -f origin "$DEFAULT_BRANCH" 2>&1) || true
-        echo "$push_output"
-
-        if echo "$push_output" | grep -q "protected"; then
-            warn "分支可能受保护"
+        # 推送并解析中文错误
+        info "正在推送到 $BRANCH..."
+        push_output=$(git push -f origin "$BRANCH" 2>&1) || true
+        if echo "$push_output" | grep -q "Cannot force-push"; then
+            warn "⚠️ 无法强制推送到 $BRANCH 分支（受保护）"
+        fi
+        if echo "$push_output" | grep -q "Cannot update this protected ref"; then
+            warn "⚠️ 远程分支受保护，更新被拒绝"
+        fi
+        if echo "$push_output" | grep -q "Changes must be made through a pull request"; then
+            warn "⚠️ 必须通过 Pull Request 才能修改此分支"
+        fi
+        if echo "$push_output" | grep -q "required status checks"; then
+            warn "⚠️ 分支有必需的状态检查未通过"
+        fi
+        if echo "$push_output" | grep -q "error:"; then
+            warn "⚠️ 推送失败，请检查远程分支规则或权限"
         fi
 
-        if echo "$push_output" | grep -q "error"; then
-            warn "推送失败"
-        fi
-
-        success "完成: $REPO_PATH"
-
-        cd / >/dev/null 2>&1
-
-        if [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]]; then
-            rm -rf "$TMP_DIR" 2>/dev/null
-            info "已删除临时目录"
-        fi
-
-        if [[ -n "$TMP_WORKFLOW" && -d "$TMP_WORKFLOW" ]]; then
-            rm -rf "$TMP_WORKFLOW" 2>/dev/null
-            info "已删除 workflow 临时目录"
-        fi
-
-        echo "-----------------------------------"
-
+        cd ~
+        rm -rf "$TMP_DIR"
+        success "临时目录已删除"
+        title "=== 仓库 $REPO_PATH 操作完成 ==="
     done
-
 done
