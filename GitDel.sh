@@ -25,14 +25,9 @@ while true; do
         TMP_DIR=""
         TMP_WORKFLOW=""
 
-        cleanup() {
-            [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]] && rm -rf "$TMP_DIR" 2>/dev/null
-            [[ -n "$TMP_WORKFLOW" && -d "$TMP_WORKFLOW" ]] && rm -rf "$TMP_WORKFLOW" 2>/dev/null
-        }
-
-        trap cleanup RETURN
-
-        # ===== 解析仓库 =====
+        # =========================
+        # 解析仓库
+        # =========================
         if [[ "$INPUT_REPO" =~ ^https://github.com/(.+)$ ]]; then
             REPO_PATH="${BASH_REMATCH[1]}"
         else
@@ -47,14 +42,18 @@ while true; do
 
         info "准备操作仓库: $REPO_PATH"
 
-        # ===== clone =====
+        # =========================
+        # clone
+        # =========================
         TMP_DIR=$(mktemp -d)
         info "临时目录: $TMP_DIR"
 
         git clone "$REMOTE_URL" "$TMP_DIR"
         cd "$TMP_DIR"
 
-        # ===== 自动检测默认分支 =====
+        # =========================
+        # 自动检测默认分支
+        # =========================
         DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
 
         if [[ -z "$DEFAULT_BRANCH" ]]; then
@@ -69,14 +68,18 @@ while true; do
 
         info "默认分支: $DEFAULT_BRANCH"
 
-        # ===== 备份 workflows =====
+        # =========================
+        # 备份 workflows
+        # =========================
         if [ -d ".github/workflows" ]; then
             TMP_WORKFLOW=$(mktemp -d)
             cp -r .github/workflows "$TMP_WORKFLOW/"
             info "已备份 workflows"
         fi
 
-        # ===== 清空历史 =====
+        # =========================
+        # 清空历史
+        # =========================
         rm -rf .git
         git init
 
@@ -87,7 +90,9 @@ while true; do
         git commit -m "init"
         success "历史已清空"
 
-        # ===== 恢复 workflows =====
+        # =========================
+        # 恢复 workflows
+        # =========================
         if [ -d "$TMP_WORKFLOW/workflows" ]; then
             mkdir -p .github
             rsync -a "$TMP_WORKFLOW/workflows/" .github/workflows/
@@ -96,16 +101,19 @@ while true; do
             success "已恢复 workflows"
         fi
 
-        # ===== 强制统一分支 =====
+        # =========================
+        # 强制分支统一
+        # =========================
         git branch -M "$DEFAULT_BRANCH"
 
         git remote add origin "$REMOTE_URL"
 
-        # ===== push =====
+        # =========================
+        # push
+        # =========================
         info "推送到 $DEFAULT_BRANCH ..."
 
         push_output=$(git push -f origin "$DEFAULT_BRANCH" 2>&1) || true
-
         echo "$push_output"
 
         if echo "$push_output" | grep -q "protected"; then
@@ -113,10 +121,24 @@ while true; do
         fi
 
         if echo "$push_output" | grep -q "error"; then
-            warn "推送失败，请检查权限"
+            warn "推送失败"
         fi
 
         success "完成: $REPO_PATH"
+
+        cd / >/dev/null 2>&1
+
+        if [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]]; then
+            rm -rf "$TMP_DIR" 2>/dev/null
+            info "已删除临时目录"
+        fi
+
+        if [[ -n "$TMP_WORKFLOW" && -d "$TMP_WORKFLOW" ]]; then
+            rm -rf "$TMP_WORKFLOW" 2>/dev/null
+            info "已删除 workflow 临时目录"
+        fi
+
+        echo "-----------------------------------"
 
     done
 
