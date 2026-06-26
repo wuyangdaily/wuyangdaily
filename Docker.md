@@ -167,6 +167,7 @@ docker run -d \
   -p 443:443 \
   -v ~/npm/data:/data \
   -v ~/npm/letsencrypt:/etc/letsencrypt \
+  -e TZ=Asia/Shanghai \
   --restart=always \
   chishin/nginx-proxy-manager-zh:release
 ```
@@ -216,6 +217,7 @@ docker run -d \
 docker run -d \
   --name wxchat \
   -p 7080:80 \
+  -e TZ=Asia/Shanghai \
   --restart=always \
   wuyangdaily/wxchat:latest
 ```
@@ -252,6 +254,7 @@ docker run -d \
   --name komari \
   -p 25774:25774 \
   -v ~/komari:/app/data \
+  -e TZ=Asia/Shanghai \
   --restart=always \
   ghcr.io/komari-monitor/komari:latest
 ```
@@ -311,6 +314,7 @@ docker run -d \
 docker run -d \
   --name mihomo \
   -v ~/mihomo:/root/.config/mihomo \
+  -e TZ=Asia/Shanghai \
   --restart=always \
   --network=host \
   metacubex/mihomo:latest
