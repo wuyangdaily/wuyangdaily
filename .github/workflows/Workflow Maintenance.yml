@@ -1,0 +1,83 @@
+name: Workflow Maintenance (Auto Safe)
+
+on:
+  schedule:
+    - cron: "0 16 * * 0"   # 每周一 0点
+  workflow_dispatch:
+    inputs:
+      enable_cleanup:
+        description: '删除旧 Release/Tag（保留最近3个）'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 删除旧 workflow 运行记录
+      - name: Delete workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 1
+
+      # 保活 commit（防止6个月禁用）
+      - name: Keepalive commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          git commit --allow-empty -m "chore: keepalive $(date -u +'%Y-%m-%d')" || echo "no changes"
+          git push || echo "push skipped"
+
+      # 删除旧的 release（保留最近3个）
+      - name: Delete old releases
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.enable_cleanup == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          releases=$(gh release list --limit 100 --json tagName,publishedAt --order desc)
+          count=0
+          echo "$releases" | jq -c '.[]' | while read -r item; do
+            tag=$(echo "$item" | jq -r '.tagName')
+            date_beijing=$(TZ=Asia/Shanghai date -d "$(echo "$item" | jq -r '.publishedAt')" "+%Y-%m-%d %H:%M:%S")
+            count=$((count+1))
+            if [ $count -le 3 ]; then
+              echo "✅ 保留 release #$count: $tag (创建于 $date_beijing)"
+            else
+              echo "🗑️ 删除 release: $tag"
+              gh release delete "$tag" --yes
+              echo "已删除 release: $tag"
+            fi
+          done
+
+      # 删除旧的 tag（保留最近3个）
+      - name: Delete old tags
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.enable_cleanup == 'true'
+        run: |
+          tags=$(git for-each-ref --format='%(refname:short)|%(creatordate:iso8601)' refs/tags | sort -t'|' -k2 -r)
+          count=0
+          echo "$tags" | while IFS='|' read -r tag date; do
+            date_beijing=$(TZ=Asia/Shanghai date -d "$date" "+%Y-%m-%d %H:%M:%S")
+            count=$((count+1))
+            if [ $count -le 3 ]; then
+              echo "✅ 保留 tag #$count: $tag (创建于 $date_beijing)"
+            else
+              echo "🗑️ 删除 tag: $tag"
+              git tag -d "$tag" 2>/dev/null || true
+              git push origin --delete "$tag" 2>/dev/null || true
+              echo "已删除 tag: $tag"
+            fi
+          done
