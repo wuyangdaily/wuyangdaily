@@ -22,8 +22,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
-          PR_JSON=$(gh api /repos/${{ github.repository }}/pulls/$PR_NUMBER)
-          MERGEABLE=$(echo "$PR_JSON" | jq -r .mergeable)
+          MERGEABLE=$(gh pr view $PR_NUMBER --json mergeable -q .mergeable)
           if [[ "$MERGEABLE" != "true" ]]; then
             echo "❌ PR is not mergeable (conflicts or checks pending)"
             exit 0
@@ -31,9 +30,9 @@ jobs:
           echo "✅ PR is mergeable"
 
       - name: Merge PR
-        if: steps.check.outcome == 'success'
+        if: steps.check.outcome == 'success' && steps.check.conclusion == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
-          gh pr merge $PR_NUMBER --squash --admin
+          gh pr merge $PR_NUMBER --squash -R ${{ github.repository }}
