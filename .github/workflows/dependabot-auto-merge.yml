@@ -1,38 +1,34 @@
-name: Dependabot Auto Merge
-
+name: automerge
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types:
+      - labeled
+      - unlabeled
+      - synchronize
+      - opened
+      - edited
+      - ready_for_review
+      - reopened
+      - unlocked
+  pull_request_review:
+    types:
+      - submitted
   check_suite:
-    types: [completed]
+    types:
+      - completed
   status: {}
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
-  auto-merge:
-    if: github.actor == 'dependabot[bot]' && github.event.pull_request.draft == false
+  automerge:
+    if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - name: Check if PR is mergeable
-        id: check
+      - id: automerge
+        name: automerge
+        uses: "pascalgn/automerge-action@v0.16.4"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          MERGEABLE=$(gh pr view $PR_NUMBER --json mergeable -q .mergeable)
-          if [[ "$MERGEABLE" != "true" ]]; then
-            echo "❌ PR is not mergeable (conflicts or checks pending)"
-            exit 0
-          fi
-          echo "✅ PR is mergeable"
-
-      - name: Merge PR
-        if: steps.check.outcome == 'success' && steps.check.conclusion == 'success'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          gh pr merge $PR_NUMBER --squash -R ${{ github.repository }}
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          MERGE_LABELS: ""
