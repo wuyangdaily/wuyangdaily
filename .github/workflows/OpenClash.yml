@@ -13,7 +13,7 @@ jobs:
         run: mkdir -p OpenClash openclash-x86 openclash-a53
 
       - name: 检出 OpenClash package 分支
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: vernesong/OpenClash
           path: OpenClash
@@ -30,7 +30,7 @@ jobs:
         run: echo "VERSION=$(head -n 1 OpenClash/master/version)" >> $GITHUB_ENV
 
       - name: 检出 core 分支
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: vernesong/OpenClash
           path: Meta
