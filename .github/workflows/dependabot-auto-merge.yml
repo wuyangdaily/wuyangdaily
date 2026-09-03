@@ -2,7 +2,10 @@ name: Dependabot Auto Merge
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
+  check_suite:
+    types: [completed]
+  status: {}
 
 permissions:
   contents: write
@@ -10,13 +13,27 @@ permissions:
 
 jobs:
   auto-merge:
-    if: github.actor == 'dependabot[bot]'
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-
     steps:
-      - name: Enable auto-merge
-        run: |
-          gh pr merge --auto --squash "$PR_URL" || echo "skip"
+      - name: Check if PR is mergeable
+        id: check
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          PR_JSON=$(gh api /repos/${{ github.repository }}/pulls/$PR_NUMBER)
+          MERGEABLE=$(echo "$PR_JSON" | jq -r .mergeable)
+          if [[ "$MERGEABLE" != "true" ]]; then
+            echo "❌ PR is not mergeable (conflicts or checks pending)"
+            exit 0
+          fi
+          echo "✅ PR is mergeable"
+
+      - name: Merge PR
+        if: steps.check.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          gh pr merge $PR_NUMBER --squash --admin
