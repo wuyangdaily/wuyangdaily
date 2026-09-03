@@ -89,7 +89,7 @@ jobs:
           ./makeself.sh ../build-apk/a53 luci-app-openclash-aarch64_cortex-a53-${{ env.VERSION }}.run "by github action" ./install.sh
 
       - name: 上传到 Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.VERSION }}
           name: "OpenClash-${{ env.VERSION }}"
