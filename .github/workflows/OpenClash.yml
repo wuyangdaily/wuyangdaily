@@ -1,0 +1,109 @@
+name: Make OpenClash run files
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 创建目录
+        run: mkdir -p OpenClash openclash-x86 openclash-a53
+
+      - name: 检出 OpenClash package 分支
+        uses: actions/checkout@v7
+        with:
+          repository: vernesong/OpenClash
+          path: OpenClash
+          ref: package
+
+      - name: 复制 IPK 和 APK
+        run: |
+          cp OpenClash/master/*.ipk openclash-x86/
+          cp OpenClash/master/*.apk openclash-x86/
+          cp OpenClash/master/*.ipk openclash-a53/
+          cp OpenClash/master/*.apk openclash-a53/
+
+      - name: 读取版本号
+        run: echo "VERSION=$(head -n 1 OpenClash/master/version)" >> $GITHUB_ENV
+
+      - name: 设置日期
+        run: echo "RELEASE_DATE=$(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+
+      - name: 检出 core 分支
+        uses: actions/checkout@v7
+        with:
+          repository: vernesong/OpenClash
+          path: Meta
+          ref: core
+
+      - name: 解压 Meta 内核
+        run: |
+          tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C openclash-x86
+          tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53
+          mv openclash-x86/clash openclash-x86/clash_meta
+          mv openclash-a53/clash openclash-a53/clash_meta
+
+      - name: 分离 IPK 和 APK
+        run: |
+          mkdir -p build-ipk/{x86,a53}
+          cp openclash-x86/*.ipk build-ipk/x86/
+          cp openclash-a53/*.ipk build-ipk/a53/
+          cp openclash-x86/clash_meta build-ipk/x86/
+          cp openclash-a53/clash_meta build-ipk/a53/
+          cat << 'EOF' > build-ipk/x86/install.sh
+          opkg update || exit 1
+          opkg install *.ipk || exit 1
+          mv clash_meta /etc/openclash/core/
+          sleep 10s
+          ifconfig br-lan > /dev/null 2>&1 || { /etc/init.d/network restart; exit 0; }
+          EOF
+          chmod +x build-ipk/x86/install.sh
+          cp build-ipk/x86/install.sh build-ipk/a53/install.sh
+          chmod +x build-ipk/a53/install.sh
+
+          mkdir -p build-apk/{x86,a53}
+          cp openclash-x86/*.apk build-apk/x86/
+          cp openclash-a53/*.apk build-apk/a53/
+          cp openclash-x86/clash_meta build-apk/x86/
+          cp openclash-a53/clash_meta build-apk/a53/
+          cat << 'EOF' > build-apk/x86/install.sh
+          apk update || exit 1
+          apk add --allow-untrusted *.apk || exit 1
+          mv clash_meta /etc/openclash/core/
+          sleep 10s
+          ifconfig br-lan > /dev/null 2>&1 || { /etc/init.d/network restart; exit 0; }
+          EOF
+          chmod +x build-apk/x86/install.sh
+          cp build-apk/x86/install.sh build-apk/a53/install.sh
+          chmod +x build-apk/a53/install.sh
+
+      - name: 克隆 makeself
+        run: git clone https://github.com/megastep/makeself.git
+
+      - name: 打包所有 run 文件
+        run: |
+          cd makeself
+          ./makeself.sh ../build-ipk/x86 openclash-x86_64-${{ env.VERSION }}.run "by github action" ./install.sh
+          ./makeself.sh ../build-ipk/a53 openclash-aarch64_cortex-a53-${{ env.VERSION }}.run "by github action" ./install.sh
+          ./makeself.sh ../build-apk/x86 luci-app-openclash-x86_64-${{ env.VERSION }}.run "by github action" ./install.sh
+          ./makeself.sh ../build-apk/a53 luci-app-openclash-aarch64_cortex-a53-${{ env.VERSION }}.run "by github action" ./install.sh
+
+      - name: 上传到 Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: "OpenClash-${{ env.VERSION }}"
+          files: makeself/*.run
+          body: |
+            📝 Auto Update OpenClash at ${{ env.RELEASE_DATE }}
+
+            ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/${{ github.repository }}/${{ env.VERSION }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)
+
+            **包含两种格式**：  
+            - `luci-app-openclash-*.run` → 适用于 OpenWrt 25.12（APK）
+            - `openclash-*.run` → 适用于 OpenWrt 23/24（IPK）  
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
