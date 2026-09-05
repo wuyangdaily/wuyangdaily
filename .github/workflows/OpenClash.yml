@@ -29,6 +29,9 @@ jobs:
       - name: 读取版本号
         run: echo "VERSION=$(head -n 1 OpenClash/master/version)" >> $GITHUB_ENV
 
+      - name: 设置日期
+        run: echo "RELEASE_DATE=$(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M')" >> $GITHUB_ENV
+
       - name: 检出 core 分支
         uses: actions/checkout@v7
         with:
@@ -95,6 +98,8 @@ jobs:
           name: "OpenClash-${{ env.VERSION }}"
           files: makeself/*.run
           body: |
+            📝 Auto update OpenClash at ${{ env.RELEASE_DATE }}
+
             ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/${{ github.repository }}/${{ env.VERSION }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)
 
             **包含两种格式**：  
