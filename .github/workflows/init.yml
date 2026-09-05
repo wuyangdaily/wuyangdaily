@@ -1,0 +1,126 @@
+name: INIT
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_list:
+        description: '仓库列表（空格分隔，支持 owner/repo 或完整 URL）'
+        required: true
+        default: ''
+      github_token:
+        description: 'GitHub Personal Access Token（留空使用仓库 Secret）'
+        required: false
+        default: ''
+      branch:
+        description: '要操作的分支名（留空自动检测默认分支）'
+        required: false
+        default: ''
+
+jobs:
+  clear-history:
+    runs-on: ubuntu-latest
+    env:
+      REPO_LIST: ${{ github.event.inputs.repo_list }}
+      BRANCH_INPUT: ${{ github.event.inputs.branch }}
+      INPUT_TOKEN: ${{ github.event.inputs.github_token }}
+      SECRET_TOKEN: ${{ secrets.INIT_TOKEN }}
+
+    steps:
+      - name: 安装依赖
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
+      - name: 清空历史
+        run: |
+          set -e
+
+          if [[ -n "$INPUT_TOKEN" ]]; then
+            TOKEN="$INPUT_TOKEN"
+            echo "✅ 使用手输 Token"
+          elif [[ -n "$SECRET_TOKEN" ]]; then
+            TOKEN="$SECRET_TOKEN"
+            echo "✅ 使用仓库 INIT_TOKEN"
+          else
+            echo "❌ 错误：未提供 Token（手动输入和 Secret 均为空）"
+            exit 1
+          fi
+
+          IFS=' ' read -ra REPOS <<< "$REPO_LIST"
+          for INPUT_REPO in "${REPOS[@]}"; do
+            if [[ "$INPUT_REPO" =~ ^https://github.com/(.+)$ ]]; then
+              REPO_PATH="${BASH_REMATCH[1]}"
+            else
+              REPO_PATH="${INPUT_REPO#/}"
+            fi
+            echo "▶️ 正在处理仓库: $REPO_PATH"
+
+            TMP_DIR=$(mktemp -d)
+            trap 'rm -rf "$TMP_DIR"' EXIT
+
+            CLONE_URL="https://${TOKEN}@github.com/${REPO_PATH}.git"
+            git clone "$CLONE_URL" "$TMP_DIR"
+            cd "$TMP_DIR"
+
+            if [[ -n "$BRANCH_INPUT" ]]; then
+              BRANCH="$BRANCH_INPUT"
+              echo "ℹ️ 使用手动指定的分支: $BRANCH"
+            else
+              DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+              if [[ -z "$DEFAULT_BRANCH" ]]; then
+                if git show-ref --verify refs/remotes/origin/main >/dev/null 2>&1; then
+                  DEFAULT_BRANCH="main"
+                elif git show-ref --verify refs/remotes/origin/master >/dev/null 2>&1; then
+                  DEFAULT_BRANCH="master"
+                else
+                  echo "⚠️ 无法确定默认分支，将使用 'main'"
+                  DEFAULT_BRANCH="main"
+                fi
+              fi
+              BRANCH="$DEFAULT_BRANCH"
+              echo "🔍 自动检测到默认分支: $BRANCH"
+            fi
+
+            if [ -z "$(git ls-remote --heads origin 2>/dev/null)" ]; then
+              echo "⚠️ 仓库为空，继续强制重置..."
+            fi
+
+            if [ -d ".github/workflows" ]; then
+              TMP_WORKFLOW=$(mktemp -d)
+              cp -r .github/workflows "$TMP_WORKFLOW/"
+              echo "📁 工作流已备份"
+            fi
+
+            rm -rf .git
+            git init
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+
+            git branch -m master "$BRANCH" 2>/dev/null || true
+
+            git add .
+            git commit -m "Init"
+
+            if [ -d "$TMP_WORKFLOW/workflows" ]; then
+              mkdir -p .github
+              rsync -a "$TMP_WORKFLOW/workflows/" .github/workflows/
+              git add -f .github/workflows
+              git commit --amend --no-edit
+              echo "✅ 工作流已恢复"
+            fi
+
+            git remote add origin "$CLONE_URL"
+
+            echo "⬆️ 强制推送到 $BRANCH ..."
+            PUSH_OUT=$(git push -f origin HEAD:"$BRANCH" 2>&1) || true
+            echo "推送输出："
+            echo "$PUSH_OUT"
+
+            if echo "$PUSH_OUT" | grep -q -e "Cannot force-push" -e "protected" -e "status checks" -e "refspec" -e "does not match"; then
+              echo "❌ 推送失败，请检查分支保护或权限："
+              echo "$PUSH_OUT"
+            else
+              echo "✅ 仓库 $REPO_PATH 清空完成"
+            fi
+
+            cd - >/dev/null
+            rm -rf "$TMP_DIR"
+          done
