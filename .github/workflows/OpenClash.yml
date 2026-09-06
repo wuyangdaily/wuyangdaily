@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: 创建目录
         run: mkdir -p OpenClash openclash-x86 openclash-a53
